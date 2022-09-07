@@ -1,5 +1,5 @@
 
-# Difformer - PyTorch
+# Difformer - PyTorch (Experimental)
 
 Diffusion based transformer, in PyTorch.
 

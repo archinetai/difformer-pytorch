@@ -31,9 +31,6 @@ Diffusion
 """
 
 
-""" Distributions """
-
-
 class Distribution:
     def __call__(self, num_samples: int, device: torch.device):
         raise NotImplementedError()
@@ -224,7 +221,9 @@ class DiffusionSampler(nn.Module):
         return x
 
 
-""" Transformer """
+"""
+Transformer
+"""
 
 
 def attention_mask(
@@ -452,6 +451,11 @@ class TokenEmbedding(nn.Module):
 
     def forward(self, x: Tensor) -> Tensor:
         return torch.tanh(self.embedding(x))
+
+
+"""
+Difformer
+"""
 
 
 class DifformerBase(nn.Module):
