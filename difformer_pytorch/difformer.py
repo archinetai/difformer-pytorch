@@ -445,7 +445,7 @@ class TokenEmbedding(nn.Module):
     def get_ids(self, x: Tensor) -> Tensor:
         b = x.shape[0]
         e = repeat(self.embedding.weight, "n d -> b n d", b=b)
-        sim = torch.cdist(x, e, p=2)
+        sim = -torch.cdist(x, e, p=2)
         indices = sim.argmax(dim=-1)
         return indices
 
