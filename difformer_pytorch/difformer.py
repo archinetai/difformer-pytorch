@@ -492,24 +492,55 @@ class DifformerBase(nn.Module):
             sigma_data=diffusion_sigma_data,
         )
 
-    def forward(self, x: Tensor, mask: Tensor) -> Tensor:
-        tokens = self.token_embedding(x)
-        tokens_masked = self.token_embedding(x.masked_fill(~mask, 0))
-        return self.diffusion(tokens, context=tokens_masked)
+    def forward(
+        self,
+        mask: Tensor,
+        tokens: Optional[Tensor] = None,
+        embedding: Optional[Tensor] = None,
+    ) -> Tensor:
+        assert_message = "Either tokens or embedding must be provided"
+        assert exists(tokens) ^ exists(embedding), assert_message
+
+        embedding_masked = None
+
+        if exists(tokens):
+            embedding = self.token_embedding(tokens)
+            embedding_masked = self.token_embedding(tokens.masked_fill(~mask, 0))
+        else:
+            assert exists(embedding)
+            mask = rearrange(mask, "b n -> b n 1")
+            embedding_masked = embedding.masked_fill(~mask, 0)
+
+        return self.diffusion(embedding, context=embedding_masked)
 
     def sample(
         self,
-        x: Tensor,
         num_steps: int,
         sigma_schedule: Schedule,
         sampler: Sampler,
+        tokens: Optional[Tensor] = None,
+        embedding: Optional[Tensor] = None,
         mask: Optional[Tensor] = None,
         **kwargs,
     ) -> Tensor:
-        # Compute masked tokens embedding and start noise
-        x_masked = x.masked_fill(~mask, 0) if exists(mask) else x
-        tokens_masked = self.token_embedding(x_masked)
-        noise = torch.randn_like(tokens_masked)
+        assert_message = "Either tokens or start embedding must be provided"
+        assert exists(tokens) ^ exists(embedding), assert_message
+
+        embedding_masked = embedding
+
+        if exists(tokens):
+            if exists(mask):
+                embedding_masked = self.token_embedding(tokens.masked_fill(~mask, 0))
+            else:
+                embedding_masked = self.token_embedding(tokens)
+        elif exists(mask):
+            assert exists(embedding)
+            mask = rearrange(mask, "b n -> b n 1")
+            embedding_masked = embedding.masked_fill(~mask, 0)  # type: ignore
+
+        assert exists(embedding_masked)
+
+        noise = torch.randn_like(embedding_masked)
         # Sample unmasked embedding
         diffusion_sampler = DiffusionSampler(
             diffusion=self.diffusion,
@@ -517,10 +548,13 @@ class DifformerBase(nn.Module):
             sampler=sampler,
             sigma_schedule=sigma_schedule,
         )
-        embedding = diffusion_sampler(noise, context=tokens_masked, **kwargs)
-        # Convert back into tokens
-        indices = self.token_embedding.get_ids(embedding)
-        return indices
+        embedding_sample = diffusion_sampler(noise, context=embedding_masked, **kwargs)
+
+        # Convert back into tokens, if input is token based
+        if exists(tokens):
+            return self.token_embedding.get_ids(embedding_sample)
+
+        return embedding_sample
 
 
 class Difformer(DifformerBase):
