@@ -62,5 +62,5 @@ sampled = difformer.sample(
     embedding=embedding,
     mask=mask, # Optional mask to apply on embeddings
     num_steps=5
-)
+) # [1, 1024, 512]
 ```
