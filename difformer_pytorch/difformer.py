@@ -461,21 +461,24 @@ Difformer
 class DifformerBase(nn.Module):
     def __init__(
         self,
-        num_tokens: int,
         embedding_dim: int,
         num_layers: int,
         num_heads: int,
         diffusion_sigma_distribution: Distribution,
         diffusion_sigma_data: float,
+        num_tokens: Optional[int] = None,
     ):
         super().__init__()
         assert (
             embedding_dim % num_heads == 0
         ), "embedding_dim must be divisible by num_heads"
+        self.has_embedding = exists(num_tokens)
 
-        self.token_embedding = TokenEmbedding(
-            num_tokens=num_tokens, embedding_dim=embedding_dim
-        )
+        if self.has_embedding:
+            assert exists(num_tokens)
+            self.token_embedding = TokenEmbedding(
+                num_tokens=num_tokens, embedding_dim=embedding_dim
+            )
 
         self.transformer = ContinuousTransformer(
             features=embedding_dim,
@@ -504,6 +507,7 @@ class DifformerBase(nn.Module):
         embedding_masked = None
 
         if exists(tokens):
+            self.assert_exists_embedding()
             embedding = self.token_embedding(tokens)
             embedding_masked = self.token_embedding(tokens.masked_fill(~mask, 0))
         else:
@@ -529,6 +533,7 @@ class DifformerBase(nn.Module):
         embedding_masked = embedding
 
         if exists(tokens):
+            self.assert_exists_embedding()
             if exists(mask):
                 embedding_masked = self.token_embedding(tokens.masked_fill(~mask, 0))
             else:
@@ -552,9 +557,14 @@ class DifformerBase(nn.Module):
 
         # Convert back into tokens, if input is token based
         if exists(tokens):
+            self.assert_exists_embedding()
             return self.token_embedding.get_ids(embedding_sample)
 
         return embedding_sample
+
+    def assert_exists_embedding(self):
+        assert_message = "num_tokens required in constructor if token based input"
+        assert self.has_embedding, assert_message
 
 
 class Difformer(DifformerBase):

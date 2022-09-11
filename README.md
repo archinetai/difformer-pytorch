@@ -44,10 +44,7 @@ sampled = difformer.sample(
 ```py
 from difformer_pytorch import Difformer
 
-num_tokens = 1000 # Number of tokens in the vocabulary
-
 difformer = Difformer(
-    num_tokens=num_tokens,
     embedding_dim=512,
     num_layers=6
 )
