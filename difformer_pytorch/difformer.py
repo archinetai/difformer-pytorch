@@ -278,16 +278,15 @@ class AttentionBase(nn.Module):
         v: Tensor,
         *,
         mask: Optional[Tensor] = None,
-        attention_bias: Optional[Tensor] = None,
+        rel_pos: Optional[nn.Module] = None,
     ) -> Tensor:
 
         # Split heads, scale queries
         q, k, v = rearrange_many((q, k, v), "b n (h d) -> b h n d", h=self.num_heads)
-        q = q * self.scale
 
         # Compute similarity matrix with bias and mask
-        sim = einsum("... n d, ... m d -> ... n m", q, k)
-        sim = sim + attention_bias if exists(attention_bias) else sim
+        sim = einsum("... n d, ... m d -> ... n m", q, k) * self.scale
+        sim = rel_pos(sim) if exists(rel_pos) else sim
         sim = attention_mask(sim, mask) if exists(mask) else sim
 
         # Get attention matrix with softmax
@@ -322,10 +321,10 @@ class Attention(nn.Module):
             out_features=out_features,
         )
 
-    def forward(self, x: Tensor, *, mask: Optional[Tensor] = None) -> Tensor:
+    def forward(self, x: Tensor, **kwargs) -> Tensor:
         x = self.norm(x)
         q, k, v = torch.chunk(self.to_qkv(x), chunks=3, dim=-1)
-        x = self.attention(q, k, v, mask=mask)
+        x = self.attention(q, k, v, **kwargs)
         return x
 
 
@@ -357,10 +356,72 @@ class TransformerBlock(nn.Module):
 
         self.feed_forward = FeedForward(features=features, multiplier=multiplier)
 
-    def forward(self, x: Tensor, *, mask: Tensor = None) -> Tensor:
-        x = self.attention(x, mask=mask) + x
+    def forward(self, x: Tensor, **kwargs) -> Tensor:
+        x = self.attention(x, **kwargs) + x
         x = self.feed_forward(x) + x
         return x
+
+
+class DynamicPositionBias(nn.Module):
+    """From https://github.com/lucidrains/x-transformers/"""
+
+    def __init__(
+        self,
+        dim: int,
+        num_heads: int,
+        depth: int = 2,
+        log_distance: bool = False,
+        norm: bool = False,
+    ):
+        super().__init__()
+        assert depth >= 1, "depth for dynamic position bias MLP must be >= 1"
+        self.log_distance = log_distance
+
+        self.mlp = nn.ModuleList(
+            [
+                nn.Sequential(
+                    nn.Linear(1, dim),
+                    nn.LayerNorm(dim) if norm else nn.Identity(),
+                    nn.ReLU(),
+                )
+            ]
+        )
+
+        for _ in range(depth - 1):
+            self.mlp.append(
+                nn.Sequential(
+                    nn.Linear(dim, dim),
+                    nn.LayerNorm(dim) if norm else nn.Identity(),
+                    nn.ReLU(),
+                )
+            )
+
+        self.mlp.append(nn.Linear(dim, num_heads))
+
+    def forward(self, qk_dots: Tensor) -> Tensor:
+        n, device, dtype = qk_dots.shape[-1], qk_dots.device, qk_dots.dtype
+
+        # get the (n x n) matrix of distances
+        seq_arange = torch.arange(n, device=device)
+        ctx_arange = torch.arange(n, device=device)
+        indices = rearrange(seq_arange, "i -> i 1") - rearrange(ctx_arange, "j -> 1 j")
+        indices += n - 1
+
+        # input to continuous positions MLP
+        pos = torch.arange(-n + 1, n, device=device, dtype=dtype)
+        pos = rearrange(pos, "... -> ... 1")
+
+        if self.log_distance:
+            # log of distance is sign(rel_pos) * log(abs(rel_pos) + 1)
+            pos = torch.sign(pos) * torch.log(pos.abs() + 1)
+
+        for layer in self.mlp:
+            pos = layer(pos)
+
+        # get position biases
+        bias = pos[indices]
+        bias = rearrange(bias, "i j h -> h i j")
+        return qk_dots + bias
 
 
 class LearnedPositionalEmbedding(nn.Module):
@@ -408,6 +469,8 @@ class ContinuousTransformer(nn.Module):
             nn.Linear(in_features=time_features, out_features=time_features),
         )
 
+        self.rel_pos = DynamicPositionBias(dim=features // 4, num_heads=num_heads)
+
         self.blocks = nn.ModuleList(
             [
                 TransformerBlock(
@@ -429,7 +492,7 @@ class ContinuousTransformer(nn.Module):
         x = torch.cat([x, t], dim=1)
         # Feed into transformer
         for block in self.blocks:
-            x = block(x)
+            x = block(x, rel_pos=self.rel_pos)
         # Remove extra token and context features
         x = x[:, 0:n, 0 : self.features]
         return x
