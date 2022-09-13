@@ -527,6 +527,8 @@ class DifformerBase(nn.Module):
         embedding_dim: int,
         num_layers: int,
         num_heads: int,
+        head_features: int,
+        multiplier: int,
         diffusion_sigma_distribution: Distribution,
         diffusion_sigma_data: float,
         num_tokens: Optional[int] = None,
@@ -547,9 +549,9 @@ class DifformerBase(nn.Module):
             features=embedding_dim,
             context_features=embedding_dim,
             num_blocks=num_layers,
-            head_features=embedding_dim // num_heads,
+            head_features=head_features,
             num_heads=num_heads,
-            multiplier=4,
+            multiplier=multiplier,
         )
 
         self.diffusion = Diffusion(
@@ -634,6 +636,8 @@ class Difformer(DifformerBase):
     def __init__(self, *args, **kwargs):
         default_kwargs = dict(
             num_heads=8,
+            head_features=64,
+            multiplier=4,
             diffusion_sigma_distribution=LogNormalDistribution(-3.0, 1.0),
             diffusion_sigma_data=0.1,
         )
